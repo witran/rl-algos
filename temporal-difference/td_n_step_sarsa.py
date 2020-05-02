@@ -2,10 +2,11 @@ import numpy as np
 import environment
 
 ''' some implementation notes
-    1-step -> 1 reward term + 
-    n-step -> n reward term
+    1-step -> 1 reward term + bootstrap term
+    n-step -> n reward term + bootstrap term
         last reward term will have discount: gamma ^ (n - 1)
-        q term will have discount: gamma ^ n
+        bootstrap term will have discount: gamma ^ n
+        use a sliding window of the inclusive range [t_update, t] to compute update the update trace
 
     delta = g + discounted q
 
