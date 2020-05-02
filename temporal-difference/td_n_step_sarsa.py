@@ -1,19 +1,23 @@
 import numpy as np
 import environment
 
-''' some implementation notes
-    1-step -> 1 reward term + bootstrap term
-    n-step -> n reward term + bootstrap term
-        last reward term will have discount: gamma ^ (n - 1)
-        bootstrap term will have discount: gamma ^ n
+"""
+some implementation notes
+    how many reward terms for n-step bootstrap
+        1-step -> 1 reward term + bootstrap term
+        n-step -> n reward term + bootstrap term
+            last reward term will have discount: gamma ^ (n - 1)
+            bootstrap term will have discount: gamma ^ n
 
-    delta = g + discounted q
+    computing g
+        g is discounted sum of a sliding window
+        delta = g + discounted q
 
-    2 vars for the trace window
+    details of the sliding windows
         t: runs from len(actions) - 1 -> 0
         t_update: runs from t -> 0
         inclusive range [t, t_update] length always equal trace_length
-'''
+"""
 
 BOOTSTRAP_EXPECTED = "expected"
 BOOTSTRAP_SARSA = "sarsa"

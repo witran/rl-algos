@@ -1,16 +1,12 @@
 import numpy as np
 
 
-def to_cell(state, n_col):
-    return state // n_col, state % n_col
-
-
 def create(**kwargs):
     keys = ["step_reward", "cliff_reward", "grid"]
 
-    start_cell = None
-    terminal_cells = []
-    cliff_cells = []
+    start_state = None
+    terminal_states = []
+    cliff_states = []
     grid = kwargs["grid"]
     n_row = len(grid)
     n_col = len(grid[0])
@@ -18,31 +14,30 @@ def create(**kwargs):
     for r in range(len(grid)):
         for c in range(len(grid[r])):
             if grid[r][c] == "S":
-                start_cell = (r, c)
+                start_state = r * n_col + c
             elif grid[r][c] == "T":
-                terminal_cells.append((r, c))
+                terminal_states.append(r * n_col + c)
             elif grid[r][c] == "C":
-                cliff_cells.append((r, c))
+                cliff_states.append(r * n_col + c)
 
     assert(all(map(lambda key: key in kwargs, keys)))
 
     env = {
-        "start_state": start_cell[0] * n_col + start_cell[1],
         "n_row": n_row,
         "n_col": n_col,
         "step_reward": kwargs["step_reward"],
         "cliff_reward": kwargs["cliff_reward"],
-        "start_cell": start_cell,
-        "terminal_cells": terminal_cells,
-        "cliff_cells": cliff_cells
+        "start_state": start_state,
+        "terminal_states": terminal_states,
+        "cliff_states": cliff_states
     }
     return env
 
 
 def step(env, state, action):
-    start_cell = env["start_cell"]
-    terminal_cells = env["terminal_cells"]
-    cliff_cells = env["cliff_cells"]
+    start_state = env["start_state"]
+    terminal_states = env["terminal_states"]
+    cliff_states = env["cliff_states"]
     n_row = env["n_row"]
     n_col = env["n_col"]
     reward = env["step_reward"]
@@ -61,11 +56,12 @@ def step(env, state, action):
     else:
         next_state = r * n_col + max(c - 1, 0)
 
-    if (r, c) in cliff_cells:
-        next_state = start_cell[0] * n_col + start_cell[1]
+    if next_state in cliff_states:
+        next_state = start_state
         reward = cliff_reward
 
-    if (r, c) in terminal_cells:
+    if next_state in terminal_states:
+        reward = 0
         over = True
 
     return next_state, reward, over
