@@ -1,5 +1,6 @@
 import numpy as np
 import environment
+from constants import BOOTSTRAP_SARSA, BOOTSTRAP_EXPECTED, BOOTSTRAP_Q
 
 """
 some implementation notes
@@ -18,10 +19,6 @@ some implementation notes
         t_update: runs from t -> 0
         inclusive range [t, t_update] length always equal trace_length
 """
-
-BOOTSTRAP_EXPECTED = "expected"
-BOOTSTRAP_SARSA = "sarsa"
-BOOTSTRAP_Q = "q"
 
 
 def learn(S, A, env, agent):

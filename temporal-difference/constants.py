@@ -1,0 +1,3 @@
+BOOTSTRAP_EXPECTED = "expected"
+BOOTSTRAP_SARSA = "sarsa"
+BOOTSTRAP_Q = "q"
