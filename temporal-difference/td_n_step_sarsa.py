@@ -6,12 +6,11 @@ import environment
     n-step -> n reward term + bootstrap term
         last reward term will have discount: gamma ^ (n - 1)
         bootstrap term will have discount: gamma ^ n
-        use a sliding window of the inclusive range [t_update, t] to compute update the update trace
 
     delta = g + discounted q
 
-    maintain 2 running vars
-        t: runs from len(actions) - 1
+    2 vars for the trace window
+        t: runs from len(actions) - 1 -> 0
         t_update: runs from t -> 0
         inclusive range [t, t_update] length always equal trace_length
 '''
