@@ -31,6 +31,10 @@ def learn(S, A, env, agent):
     trace_length = agent["trace_length"] or 1
     bootstrap = agent["bootstrap"] or BOOTSTRAP_SARSA
     n_iterations = agent["n_iterations"] or 500
+    learn_online = agent["learn_online"]
+    plan_background = agent["plan_background"]
+    if not agent["learn_online"] and not agent["plan_background"]:
+        raise Exception("learn_online and plan_background both False")
 
     # logging
     step = 0
@@ -39,13 +43,17 @@ def learn(S, A, env, agent):
     length_history = []
 
     while step < n_iterations:
-        # error = 0
-        # history = get_sample(env, q, epsilon)
-        history, error = get_sample_and_learn_online(
-            env, q, bootstrap, discount, step_size, epsilon)
+        error = 0
+        if learn_online:
+            history, error = get_sample_and_learn_online(
+                env, q, bootstrap, discount, step_size, epsilon)
+        else:
+            history = get_sample(env, q, epsilon)
 
-        error += backup(q, pi, bootstrap, discount, step_size,
-                        epsilon, trace_length, history)
+        if plan_background:
+            error += backup(q, pi, bootstrap, discount, step_size,
+                            epsilon, trace_length, history)
+
         new_pi = greedy_policy(q)
         pi = new_pi
 
