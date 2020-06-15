@@ -3,3 +3,7 @@ venv/
 __pycache__
 .vscode
 models/
+data/
+figures/
+.DS_Store
+.ipynb_checkpoints/

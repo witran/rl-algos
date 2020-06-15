@@ -4,24 +4,28 @@ import torch
 """
 Store
     capacity
-        is store size
+        store size
 
     items
-        is a double-ended queue containing tuple (data, priority)
+        a double-ended queue containing tuple of (data, priority)
 
     tail
-        is queue's tail
+        queue's tail
 
     sum_tree
-        is a sum segment tree on top of the queue
-        used to randomly sample according to distribution in log(n)
+        a sum segment tree on top of the queue
+        used for randomly sampling according to distribution in log(n)
 
     min_tree
-        is a min segment tree on top of the queue
-        used to compute max IS weight to scale down sampled IS weight
+        a min segment tree on top of the queue
+        used for computing max IS weight to scale down sampled IS weight
 
 implementation notes
-    starting from i = 1, node[i] will be parent of node[i * 2], node[i * 2 + 1]
+    queue capacity is 2^n
+    tree array length will be: 1 + 2 + 4 + ... + 2^n = 2^(n + 1) - 1
+    tree elements will occupy array from index 1 ... 2^(n + 1) -1
+    weight will be generated at sample time
+    starting from node = 1, tree[node] will be parent of tree[node * 2], tree[node * 2 + 1]
     variable name "index" will be used to index self.items
     variable name "node" will be used to index self.sum_tree & self.min_tree
 """
@@ -92,7 +96,7 @@ class Store:
             weights.append(1 / (p * len(self.items)) ** beta)
         return weights
 
-    def sample(self, size=32, beta, format="numpy"):
+    def sample(self, size=32, beta=1., format="numpy"):
         priorities = []
         samples = []
         p_sum = self.sum_tree[0]

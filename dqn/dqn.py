@@ -1,43 +1,68 @@
+import math
+import pprint
+from datetime import datetime
 from copy import deepcopy
+from tqdm import tqdm
 import gym
 import numpy as np
 import torch
 from torch import nn
 from torch import optim
+import constants
 
 
 class Agent():
     def __init__(self, **kwargs):
-        self.discount = kwargs["discount"]
-        self.softmax_temperature = kwargs["softmax_temperature"]
+        # env config
+        self.timeout = kwargs.get("timeout", 1000)
+        self.timeout_reward = kwargs.get("timeout_reward", 0)
+        self.discount = kwargs.get("discount", 0.99)
+        self.state_size = None
+        self.action_size = None
 
-        self.greedy_epsilon_max = kwargs["greedy_epsilon_max"]
-        self.greedy_epsilon_decay = kwargs["greedy_epsilon_decay"]
-        self.greedy_epsilon_min = kwargs["greedy_epsilon_min"]
+        # actor config
+        self.policy = kwargs.get("policy", constants.POLICY_EPSILON)
+        self.softmax_temperature = kwargs.get("softmax_temperature", 1.0)
+        self.greedy_epsilon_max = kwargs.get("greedy_epsilon_max", 0.1)
+        self.greedy_epsilon_min = kwargs.get("greedy_epsilon_min")
+        self.greedy_max_step = kwargs.get("greedy_max_step", 100_000)
 
-        self.priority_epsilon = kwargs["priority_epsilon"]
-        self.priority_alpha = kwargs["priority_alpha"]
+        # store config
+        self.store_size = kwargs.get("store_size")
+        self.priority_epsilon = kwargs.get("priority_epsilon")
+        self.priority_alpha = kwargs.get("priority_alpha")
 
-        self.store_size = kwargs["store_size"]
+        # learner td config
+        self.bootstrap_type = kwargs.get("bootstrap_type")
+        self.use_double_q = kwargs.get("use_double_q")
+        self.use_n_step = False
 
-        self.n_steps = kwargs["n_steps"]
-        self.n_episodes = kwargs["n_episodes"]
-        self.target_update_interval = kwargs["target_update_interval"]
-        self.n_steps_to_start_training = kwargs["n_steps_to_start_training"]
-        self.demo_interval = kwargs["demo_interval"]
-        self.log_interval = kwargs["log_interval"]
+        # model config
+        self.encode_time = kwargs.get("encode_time")
+        self.loss = kwargs.get("loss")
+        self.optimizer = kwargs.get("optimizer")
+        self.rmsprop_lr = kwargs.get("rmsprop_lr")
+        self.adam_lr = kwargs.get("adam_lr")
+        self.adam_beta_m = kwargs.get("adam_beta_m")
+        self.adam_beta_v = kwargs.get("adam_beta_v")
+        self.adam_epsilon = kwargs.get("adam_epsilon")
+        self.n_batches = kwargs.get("n_batches")
+        self.batch_size = kwargs.get("batch_size")
+        self.epochs = kwargs.get("epochs")
 
-        self.timeout = kwargs["timeout"]
-        self.timeout_reward = kwargs["timeout_reward"]
+        # main loop config
+        self.n_steps = kwargs.get("n_steps")
+        self.n_episodes = kwargs.get("n_episodes")
+        self.target_update_interval = kwargs.get("target_update_interval")
+        self.n_steps_to_start_training = kwargs.get(
+            "n_steps_to_start_training")
+        self.smooth = kwargs.get("smooth", 10)
 
-        self.optim_lr = kwargs["optim_lr"]
-        self.optim_beta_m = kwargs["optim_beta_m"]
-        self.optim_beta_v = kwargs["optim_beta_v"]
-        self.optim_epsilon = kwargs["optim_epsilon"]
-
-        self.n_batches = kwargs["n_batches"]
-        self.batch_size = kwargs["batch_size"]
-        self.epochs = kwargs["epochs"]
+        # logging config
+        self.log = kwargs.get("log")
+        self.log_interval = kwargs.get("log_interval")
+        self.demo = kwargs.get("demo")
+        self.demo_interval = kwargs.get("demo_interval")
 
 
 class Store():
@@ -69,69 +94,108 @@ class Store():
             s_next.append(item[3])
             done.append(item[4])
 
-        # s, a, r, s_next, done = samples.T
-        # s, r, s_next, done = map(
-        #     lambda arr: torch.tensor(np.vstack(arr)).float(),
-        #     (s, r, s_next, done))
-        # a = torch.tensor(np.vstack(a))
         s, r, s_next, done = map(lambda arr: torch.tensor(
             arr).float(), (s, r, s_next, done))
         a = torch.tensor(a)
-        # print(s.shape, a.shape, r.shape, s_next.shape, done.shape)
 
         return s, a, r, s_next, done
 
 
+def run(env, agent, n_runs=1, env_name="", show_plot=False):
+    pprint.pprint(agent.__dict__)
+
+    qnet = None
+    reward_histories = []
+    loss_histories = []
+
+    for _ in range(n_runs):
+        qnet, reward_history, loss_history = learn(env, agent)
+        env.close()
+        reward_histories.append(reward_history)
+        loss_histories.append(loss_history)
+
+    return qnet, reward_histories, loss_histories
+
+
+def plot(title, data, file_id, save=False, show=False):
+    for d in data:
+        plt.plot(d)
+    plt.title(title)
+    if save:
+        plt.savefig('figures/' + title + '_' + file_id)
+    if show:
+        plt.show()
+
+
 def model(input_size, output_size):
-    l1 = nn.Linear(input_size, 256)
-    l2 = nn.Linear(256, output_size)
-    torch.nn.init.orthogonal_(l1.weight)
-    torch.nn.init.zeros_(l1.bias)
-    torch.nn.init.orthogonal_(l2.weight)
-    torch.nn.init.zeros_(l2.bias)
+    hidden_size = 256
+    # hidden_size = 64
+    l1 = nn.Linear(input_size, hidden_size)
+    l2 = nn.Linear(hidden_size, output_size)
+    # torch.nn.init.orthogonal_(l1.weight)
+    # torch.nn.init.zeros_(l1.bias)
+    # torch.nn.init.orthogonal_(l2.weight)
+    # torch.nn.init.zeros_(l2.bias)
     return nn.Sequential(l1, nn.ReLU(), l2)
 
 
-def append_step(s, step, timeout):
-    return np.concatenate((s, [step / timeout]))
+def encode(s, step, agent):
+    if agent.encode_time:
+        return np.concatenate((s, [step / agent.timeout]))
+    return s
 
 
 def learn(env, agent):
-    input_size = env.observation_space.shape[0] + 1
-    output_size = env.action_space.n
+    # model
+    state_size = env.observation_space.shape[0]
+    if agent.encode_time:
+        state_size += 1
+    action_size = env.action_space.n
+    agent.state_size = state_size
+    agent.action_size = action_size
 
-    print("input:{}, output:{}".format(input_size, output_size))
+    print("input:{}, output:{}".format(state_size, action_size))
 
-    qnet = model(input_size, output_size)
+    qnet = model(state_size, action_size)
     qnet_target = deepcopy(qnet)
 
-    # optimizer = optim.Adam(qnet.parameters(), lr=agent.learning_rate)
-    # optimizer = optim.RMSprop(qnet.parameters(), lr=agent.learning_rate)
-    optimizer = optim.Adam(
-        qnet.parameters(),
-        lr=agent.optim_lr,
-        betas=(
-            agent.optim_beta_m,
-            agent.optim_beta_v),
-        eps=agent.optim_epsilon)
+    if agent.optimizer == constants.OPTIMIZER_ADAM:
+        optimizer = optim.Adam(
+            qnet.parameters(),
+            lr=agent.adam_lr,
+            betas=(
+                agent.adam_beta_m,
+                agent.adam_beta_v),
+            eps=agent.adam_epsilon)
+    elif agent.optimizer == constants.OPTIMIZER_RMSPROP:
+        optimizer = optim.RMSprop(qnet.parameters(), lr=agent.rmsprop_lr)
 
+    # store
     store = Store(agent.store_size)
-
-    step = 0
-    n_episodes = 0
-    s = append_step(env.reset(), step, agent.timeout)
 
     # debugging data
     r_sum = 0
     r_sum_window = []
-    r_sum_window_length = 10
+    r_sum_window_length = agent.smooth
     loss = 0
     reward_history = []
     loss_history = []
 
+    # main loop
+    step = 0
+    n_episodes = 0
+    s = encode(env.reset(), step, agent)
+
+    use_tqdm = not agent.log and not agent.demo
+    progress = None
+    if use_tqdm:
+        progress = tqdm(total=agent.n_episodes)
+
     for i in range(agent.n_steps):
-        # act & store
+        # act
         a, s_next, r, done = act(env, agent, qnet, s, step)
+
+        # store
         store.add((s, a, r, s_next, done), 0)
 
         # loop
@@ -143,11 +207,16 @@ def learn(env, agent):
             r_sum_window.append(r_sum)
             reward_history.append(sum(r_sum_window) / len(r_sum_window))
 
-            s = append_step(env.reset(), step, agent.timeout)
+            if use_tqdm:
+                progress.update(1)
+
+            s = encode(env.reset(), step, agent)
             r_sum = 0
             step = 0
 
             if n_episodes == agent.n_episodes:
+                if use_tqdm:
+                    progress.close()
                 break
 
         else:
@@ -168,16 +237,17 @@ def learn(env, agent):
                 qnet_target = deepcopy(qnet)
 
             # demo on interval
-            if step == 0 and (n_episodes + 1) % agent.demo_interval == 0:
+            if agent.demo and step == 0 and \
+                    (n_episodes + 1) % agent.demo_interval == 0:
                 print("----- DEMO -----")
                 last_episode_reward = play(env, agent, qnet, render=True)
                 print("last episode reward", last_episode_reward)
                 print("----------------")
 
             # print debug on interval
-            if (i + 1) % agent.log_interval == 0:
+            if agent.log and (i + 1) % agent.log_interval == 0:
                 print("-----")
-                print("step #{}, num episodes played: {}, store size: {} \nloss: {}, last {} episodes avg={} best={} worst={}".format(
+                print("step #{}, num episodes played: {}, store size: {} loss: {}, last {} episodes avg={} best={} worst={}".format(
                     i + 1,
                     n_episodes,
                     len(store.buffer),
@@ -193,10 +263,18 @@ def learn(env, agent):
 
 def act(env, agent, qnet, s, current_step):
     q = qnet(torch.tensor(s).float())
-    pi = softmax_policy(q, agent.softmax_temperature).detach().numpy()
+    if agent.policy == constants.POLICY_SOFTMAX:
+        pi = policy_softmax(q, agent.softmax_temperature).detach().numpy()
+    else:
+        epsilon = get_epsilon(
+            agent.greedy_epsilon_max,
+            agent.greedy_epsilon_min,
+            agent.greedy_max_step,
+            current_step)
+        pi = policy_epsilon(q, epsilon).detach().numpy()
     a = sample_action(pi)
     s_next, r, done, info = env.step(a)
-    s_next = append_step(s_next, current_step + 1, agent.timeout)
+    s_next = encode(s_next, current_step + 1, agent)
 
     if current_step + 1 > agent.timeout:
         done = True
@@ -209,7 +287,7 @@ def play(env, agent, qnet, render=False):
     max_step = 1000
     step = 0
     done = False
-    s = append_step(env.reset(), 0, agent.timeout)
+    s = encode(env.reset(), 0, agent)
     r_sum = 0
     actions = []
 
@@ -220,7 +298,7 @@ def play(env, agent, qnet, render=False):
         a = q.argmax().item()
         actions.append(a)
         s_next, r, done, info = env.step(a)
-        s = append_step(s_next, step, agent.timeout)
+        s = encode(s_next, step, agent)
         step += 1
         r_sum += r
 
@@ -236,7 +314,7 @@ def sample_action(pi):
     return np.random.choice(np.arange(len(pi)), p=pi).item()
 
 
-def softmax_policy(q_values, tau=1.):
+def policy_softmax(q_values, tau=1.):
     preferences = q_values / tau
     max_preference = preferences.max(dim=-1, keepdim=True)[0]
     numerator = (preferences - max_preference).exp()
@@ -245,10 +323,19 @@ def softmax_policy(q_values, tau=1.):
     return pi
 
 
-# def epsilon_policy(q_values, epsilon_max, epsilon_min, epsilon_decay, step):
-#     epsilon = MIN_EPSILON + (MAX_EPSILON - MIN_EPSILON) * \
-#         math.exp(-LAMBDA * self.steps)
-#     pass
+# linearly decay until saturation
+def get_epsilon(epsilon_max, epsilon_min, max_step, step):
+    return epsilon_max + min(step, max_step) / max_step * (epsilon_min - epsilon_max)
+
+
+def policy_epsilon(q_values, epsilon):
+    pi = torch.ones(q_values.shape) * epsilon / q_values.shape[-1]
+    max_q = torch.max(q_values, dim=-1, keepdim=True)[0]
+    mask = (q_values == max_q).float()
+    max_q_dist = mask * (1 - epsilon) / mask.sum(dim=-1, keepdim=True)
+    pi += max_q_dist
+    return pi
+
 
 def get_q(qnet, s, a):
     q_values = qnet(s)
@@ -257,43 +344,66 @@ def get_q(qnet, s, a):
     return q
 
 
-def get_q_target_expected_sarsa(qnet_target, discount, r, s_next, done):
+def get_q_target_expected_sarsa(qnet, qnet_target, discount, r, s_next, done, use_double_q):
     q_values_next = qnet_target(s_next)
-    pi = softmax_policy(q_values_next)
-    bootstrap_term = (
-        pi * q_values_next
-    ).sum(dim=-1) * (1 - done)
+
+    if use_double_q:
+        pi = policy_softmax(qnet(s_next))
+    else:
+        pi = policy_softmax(q_values_next)
+
+    bootstrap_term = (pi * q_values_next).sum(dim=-1) * (1 - done)
     return (r + discount * bootstrap_term)
 
 
-def get_q_target_max_sarsa(qnet_target, discount, r, s_next, done):
+def get_q_target_max_q(qnet, qnet_target, discount, r, s_next, done, use_double_q):
     q_values_next = qnet_target(s_next)
-    pi = softmax_policy(q_values_next)
-    bootstrap_term = (
-        pi * q_values_next
-    ).sum(dim=-1, keepdim=True) * (1 - done)
-    return (r + discount * bootstrap_term).squeeze()
+    if use_double_q:
+        # argmax by q_a
+        q_max_indexes = torch.arange(
+            q_values_next.shape[0]) * q_values_next.shape[1] + torch.argmax(qnet(s_next), dim=-1)
+        # q_b[argmax[q_a]]
+        q_max = q_values_next.take(q_max_indexes)
+    else:
+        q_max = torch.max(q_values_next, dim=-1)[0]
+
+    bootstrap_term = q_max * (1 - done)
+    return (r + discount * bootstrap_term)
 
 
 def train(qnet, qnet_target, optimizer, store, agent):
     discount = agent.discount
     batch_size = agent.batch_size
     epochs = agent.epochs
+    use_double_q = agent.use_double_q
+    state_size = agent.state_size
 
-    # loss_fn = mg.nn.huber_loss
-    # loss_fn = torch.nn.L1Loss
-    loss_fn = torch.nn.MSELoss()
+    if agent.loss == constants.LOSS_HUBER:
+        loss_fn = torch.nn.SmoothL1Loss()
+    elif agent.loss == constants.LOSS_MSE:
+        loss_fn = torch.nn.MSELoss()
+    else:
+        raise Exception("Unknown loss function " + agent.loss)
+
     loss_sum = 0
 
     s, a, r, s_next, done = store.sample(batch_size)
-    # print('shapey', s.shape, a.shape, r.shape, s_next.shape, done.shape)
+
+    assert s.shape == s_next.shape == torch.Size(
+        [batch_size, agent.state_size])
+    assert a.shape == r.shape == done.shape == torch.Size([batch_size])
+
     for epoch in range(epochs):
-        # both q & q_target are
-        # computed only for the selected action
-        # then squeezed, thus have shape of (batch)
+        # q & q_target are computed only for the selected action
+        # and have shape of (batch_size)
         q = get_q(qnet, s, a)
-        q_target = get_q_target_expected_sarsa(
-            qnet_target, discount, r, s_next, done)
+
+        if agent.bootstrap_type == constants.BOOTSTRAP_MAX_Q:
+            q_target = get_q_target_max_q(
+                qnet, qnet_target, discount, r, s_next, done, use_double_q)
+        else:
+            q_target = get_q_target_expected_sarsa(
+                qnet, qnet_target, discount, r, s_next, done, use_double_q)
 
         loss = loss_fn(q, q_target)
         loss.backward()
@@ -304,3 +414,37 @@ def train(qnet, qnet_target, optimizer, store, agent):
         loss_sum += loss.item()
 
     return loss_sum
+
+
+def test_get_epsilon():
+    assert np.allclose(get_epsilon(0.2, 0.1, 100_000, 0), 0.2)
+    assert np.allclose(get_epsilon(0.2, 0.1, 100_000, 25_000), 0.175)
+    assert np.allclose(get_epsilon(0.2, 0.1, 100_000, 50_000), 0.15)
+    assert np.allclose(get_epsilon(0.2, 0.1, 100_000, 75_000), 0.125)
+
+    print('get_epsilon() passed')
+
+
+def test_policy_epsilon():
+    epsilon = 0.1
+    q_values = torch.tensor([
+        [1.5, 5.0, 5.0, 5.0],
+        [0.9, 0.8, 0.7, 0.7]
+    ])
+    pi = policy_epsilon(q_values, epsilon)
+    pi_expected = torch.tensor([
+        [0.025, 0.325, 0.325, 0.325],
+        [0.925, 0.025, 0.025, 0.025]
+    ])
+    assert torch.allclose(pi, pi_expected)
+
+    q_values = torch.tensor([1.5, 5., 5., 5.])
+    pi = policy_epsilon(q_values, epsilon)
+    pi_expected = torch.tensor([0.025, 0.325, 0.325, 0.325])
+    assert torch.allclose(pi, pi_expected)
+
+    print('policy_epsilon() passed')
+
+
+test_policy_epsilon()
+test_get_epsilon()
