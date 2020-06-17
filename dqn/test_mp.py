@@ -85,7 +85,7 @@ def run():
     monitor.start()
 
     for i in range(n_workers):
-        p = mp.Process(target=worker, args=(
+        p = mp.Process(target=worker_profiled, args=(
             i, result_table, monitor, task_queue))
         p.start()
 

@@ -7,6 +7,45 @@ import socket
 import sys
 import concurrent.futures
 import pickle
+import cProfile
+
+N_PROCS = 8
+N_ITERS = 1 << 14
+N_TASKS = 16
+TASK_DURATION = 0.000001
+N_TESTS = 5
+
+
+def run_test():
+    if sys.argv[1] == "queue":
+        s = 0
+        for i in range(N_TESTS):
+            queue_monitor = QueueMonitor(n_workers=N_PROCS)
+            start = time.time()
+            test(queue_monitor)
+            d = time.time() - start
+            print('run #{}: {}s'.format(i, round(d, 4)))
+            s += time.time() - start
+
+        mean = s / N_TESTS
+        print('queue mean: {}s'.format(round(mean, 4)))
+        print('span duration: {}s'.format(
+            round(N_TASKS / N_PROCS * N_ITERS * TASK_DURATION, 4)))
+
+    else:
+        s = 0
+        for i in range(N_TESTS):
+            shm_monitor = SharedMemMonitor(n_workers=N_PROCS)
+            start = time.time()
+            test(shm_monitor)
+            d = time.time() - start
+            print('run #{}: {}s'.format(i, round(d, 4)))
+            s += d
+
+        mean = s / N_TESTS
+        print('shm mean: {}s'.format(round(mean, 4)))
+        print('span duration: {}s'.format(
+            round(N_TASKS / N_PROCS * N_ITERS * TASK_DURATION, 4)))
 
 
 class QueueMonitor():
@@ -33,7 +72,7 @@ class QueueMonitor():
             # shared render logic
             data = pickle.dumps([list(self._progress_table),
                                  list(self._max_progress_table)])
-            # sent = sock.sendto(data, server_address)
+            sent = sock.sendto(data, server_address)
 
     def update(self, worker_id, task_id, progress, max_progress):
         self._queue.put((worker_id, progress, max_progress))
@@ -60,12 +99,12 @@ class SharedMemMonitor():
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         server_address = ('localhost', 4321)
         while self._running:
-            time.sleep(0.1)
+            time.sleep(0.05 + random.random() * 0.1)
 
             # shared render logic
             data = pickle.dumps([list(self._progress_table),
                                  list(self._max_progress_table)])
-            # sent = sock.sendto(data, server_address)
+            sent = sock.sendto(data, server_address)
 
     # worker processes will call this fn
     def update(self, worker_id, task_id, progress, max_progress):
@@ -76,16 +115,12 @@ class SharedMemMonitor():
         self._running = False
 
 
-def hello(anything):
-    print('helloooo', mp.current_process().name)
-
-
 def run_task(worker_id, result_table, monitor, args):
     task_id, params = args
     n_iters = params["n_iters"]
     monitor.update(worker_id, task_id, 0, n_iters)
     for i in range(n_iters):
-        time.sleep(0.001)
+        time.sleep(TASK_DURATION)
         monitor.update(worker_id, task_id, i, n_iters)
 
 
@@ -100,9 +135,15 @@ def worker(worker_id, result_table, monitor, task_queue):
         task_queue.task_done()
 
 
-N_PROCS = 8
-N_ITERS = 1 << 12
-N_TASKS = 8
+def worker_profiled(worker_id, result_table, monitor, task_queue):
+    # if worker_id == 0:
+    #     cProfile.runctx('worker(worker_id, result_table, monitor, task_queue)',
+    #                     globals(), locals(), 'monitor_{}_{}.cprofile'.format(
+    #                         sys.argv[1], worker_id))
+    # else:
+    #     worker(worker_id, result_table, monitor, task_queue)
+    worker(worker_id, result_table, monitor, task_queue)
+
 
 mp.set_start_method('fork', force=True)
 
@@ -113,7 +154,7 @@ def test(monitor):
     result_table = None
 
     for i in range(N_PROCS):
-        p = mp.Process(target=worker, args=(
+        p = mp.Process(target=worker_profiled, args=(
             i, result_table, monitor, task_queue))
         p.start()
     # send task args to task_queue
@@ -136,15 +177,4 @@ def test(monitor):
     #     monitor.stop()
 
 
-if sys.argv[1] == "queue":
-    queue_monitor = QueueMonitor(n_workers=N_PROCS)
-    start = time.time()
-    test(queue_monitor)
-    print('queue monitor: {}s'.format(round(time.time() - start, 4)))
-
-else:
-
-    shm_monitor = SharedMemMonitor(n_workers=N_PROCS)
-    start = time.time()
-    test(shm_monitor)
-    print('shm monitor: {}s'.format(round(time.time() - start, 4)))
+run_test()
