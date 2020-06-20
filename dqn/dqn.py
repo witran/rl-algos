@@ -101,30 +101,33 @@ class Store():
         return s, a, r, s_next, done
 
 
-def run(env, agent, n_runs=1, env_name="", show_plot=False):
-    pprint.pprint(agent.__dict__)
+# def run(env_code, agent, n_runs=1, show_plot=False):
+#     # pprint.pprint(agent.__dict__)
 
-    qnet = None
-    reward_histories = []
-    loss_histories = []
+#     qnet = None
+#     reward_histories = []
+#     loss_histories = []
 
-    for _ in range(n_runs):
-        qnet, reward_history, loss_history = learn(env, agent)
-        env.close()
-        reward_histories.append(reward_history)
-        loss_histories.append(loss_history)
+#     env = gym.make(env_code)
 
-    return qnet, reward_histories, loss_histories
+#     for _ in range(n_runs):
+#         qnet, reward_history, loss_history = learn(env, agent)
+#         reward_histories.append(reward_history)
+#         # loss_histories.append(loss_history)
+
+#     env.close()
+#     # return qnet, reward_histories, loss_histories
+#     return reward_histories
 
 
-def plot(title, data, file_id, save=False, show=False):
-    for d in data:
-        plt.plot(d)
-    plt.title(title)
-    if save:
-        plt.savefig('figures/' + title + '_' + file_id)
-    if show:
-        plt.show()
+# def plot(title, data, file_id, save=False, show=False):
+#     for d in data:
+#         plt.plot(d)
+#     plt.title(title)
+#     if save:
+#         plt.savefig('figures/' + title + '_' + file_id)
+#     if show:
+#         plt.show()
 
 
 def model(input_size, output_size):
@@ -145,7 +148,7 @@ def encode(s, step, agent):
     return s
 
 
-def learn(env, agent):
+def learn(env, agent, monitor=None, worker_id=None):
     # model
     state_size = env.observation_space.shape[0]
     if agent.encode_time:
@@ -154,7 +157,7 @@ def learn(env, agent):
     agent.state_size = state_size
     agent.action_size = action_size
 
-    print("input:{}, output:{}".format(state_size, action_size))
+    # print("input:{}, output:{}".format(state_size, action_size))
 
     qnet = model(state_size, action_size)
     qnet_target = deepcopy(qnet)
@@ -186,10 +189,14 @@ def learn(env, agent):
     n_episodes = 0
     s = encode(env.reset(), step, agent)
 
-    use_tqdm = not agent.log and not agent.demo
+    # use_tqdm = not agent.log and not agent.demo
+    use_tqdm = False
     progress = None
     if use_tqdm:
         progress = tqdm(total=agent.n_episodes)
+
+    if monitor:
+        monitor.update(worker_id, 0, agent.n_episodes)
 
     for i in range(agent.n_steps):
         # act
@@ -201,6 +208,7 @@ def learn(env, agent):
         # loop
         if done:
             n_episodes += 1
+            monitor.update(worker_id, n_episodes, agent.n_episodes)
             r_sum += r
             if len(r_sum_window) >= r_sum_window_length:
                 del r_sum_window[0]
@@ -226,6 +234,7 @@ def learn(env, agent):
 
         # learn
         if i > agent.batch_size:
+            # train
             loss = 0
             qnet_target = deepcopy(qnet)
             for _ in range(agent.n_batches):

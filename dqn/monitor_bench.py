@@ -11,9 +11,9 @@ import cProfile
 
 
 N_PROCS = 8
-N_ITERS = 1 << 5
+N_ITERS = 1 << 10
 N_TASKS = 16
-TASK_DURATION = 0.01
+TASK_DURATION = 0.0001
 N_TESTS = 5
 
 
@@ -22,11 +22,13 @@ def run_test():
         s = 0
         for i in range(N_TESTS):
             queue_monitor = QueueMonitor(n_workers=N_PROCS)
+            queue_monitor.start()
             start = time.time()
             test(queue_monitor)
             d = time.time() - start
             print('run #{}: {}s'.format(i, round(d, 4)))
             s += time.time() - start
+            queue_monitor.stop()
 
         mean = s / N_TESTS
         print('queue mean: {}s'.format(round(mean, 4)))
@@ -37,11 +39,13 @@ def run_test():
         s = 0
         for i in range(N_TESTS):
             shm_monitor = SharedMemMonitor(n_workers=N_PROCS)
+            shm_monitor.start()
             start = time.time()
             test(shm_monitor)
             d = time.time() - start
             print('run #{}: {}s'.format(i, round(d, 4)))
             s += d
+            shm_monitor.stop()
 
         mean = s / N_TESTS
         print('shm mean: {}s'.format(round(mean, 4)))
@@ -51,7 +55,6 @@ def run_test():
 
 def test(monitor):
     task_queue = mp.JoinableQueue()
-    monitor.start()
     result_table = None
     ps = []
 
@@ -67,7 +70,7 @@ def test(monitor):
         task_queue.put(None)
 
     task_queue.join()
-    monitor.stop()
+    # monitor.stop()
 
     # stuck here because resource i never freed because None is sent too early and queue is blocking
     # somehow writer don't exit because reader hasn't consumed???
@@ -169,7 +172,8 @@ class SharedMemMonitor():
         # while self._running:
         # while not self._is_done():
         while self._running:
-            time.sleep(0.05 + random.random() * 0.1)
+            # time.sleep(0.05 + random.random() * 0.1)
+            time.sleep(0.01)
 
             # shared render logic
             data = pickle.dumps([list(self._progress_table),
@@ -177,7 +181,7 @@ class SharedMemMonitor():
             sent = sock.sendto(data, server_address)
 
         # just make everyone 100%
-        # or have a report table
+        # or have a report table for error status
         for i in range(self._n_workers):
             self._progress_table[i] = self._max_progress_table[i]
         # shared render logic
