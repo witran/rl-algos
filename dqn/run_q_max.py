@@ -11,7 +11,7 @@ import dqn
 import constants
 import executor
 
-N_RUNS = 5
+N_RUNS = 10
 ENV_CODE = "CartPole-v0"
 # ENV_CODE = "LunarLander-v2"
 # ENV_CODE = "MountainCar-v0"
@@ -89,7 +89,9 @@ def generate_params():
     param_options = {
         "n_batches": [1, 2, 4],
         "batch_size": [8, 16, 32],
-        "rmsprop_lr": [0.0001, 0.00025, 0.0005, 0.001]
+        # "rmsprop_lr": [0.0001, 0.00025, 0.0005, 0.001]
+        # "rmsprop_lr": [0.001, 0.0012, 0.0015]
+        "rmsprop_lr": [0.0015, 0.0012, 0.001]
     }
 
     # names = ["n_batches", "batch_size", "rmsprop_lr"]

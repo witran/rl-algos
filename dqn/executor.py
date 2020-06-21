@@ -16,7 +16,7 @@ mp.set_start_method('fork', force=True)
 
 def launch(fn, args, output_size=1, n_workers=8):
     result_table = mp.Array('f', [0] * len(args) * output_size, lock=False)
-    monitor = Monitor(n_workers)
+    monitor = Monitor(n_workers, len(args))
     queue = mp.JoinableQueue()
     procs = []
 
@@ -57,18 +57,21 @@ def worker_loop(worker_id, queue, result_table, monitor, fn):
             result_table[len(result) * task_id + i] = result[i]
 
         queue.task_done()
+        monitor.task_done(worker_id)
 
     monitor.done(worker_id)
 
 
 class Monitor():
-    def __init__(self, n_workers):
+    def __init__(self, n_workers, n_tasks):
         self._progress_table = mp.Array('i', [0] * n_workers, lock=False)
         self._max_progress_table = mp.Array('i', [1] * n_workers, lock=False)
         self._done = mp.Array('i', [0] * n_workers, lock=False)
+        self._task_count_table = mp.Array('i', [0] * n_workers, lock=False)
         self._n_workers = n_workers
         self._thread = threading.Thread(target=self._loop)
         self._thread.start()
+        self._total_task_count = n_tasks
 
     def _all_worker_done(self):
         return all(done == 1 for done in self._done)
@@ -81,9 +84,13 @@ class Monitor():
             time.sleep(0.05 + random.random() * 0.1)
             # time.sleep(0.01)
 
+            task_done_count = sum(self._task_count_table)
+
             # shared render logic
             data = pickle.dumps([list(self._progress_table),
-                                 list(self._max_progress_table)])
+                                 list(self._max_progress_table),
+                                 task_done_count,
+                                 self._total_task_count])
             sent = sock.sendto(data, server_address)
 
     # called by worker processes
@@ -91,6 +98,9 @@ class Monitor():
         print('worker calls done', worker_id)
         self._progress_table[worker_id] = self._max_progress_table[worker_id]
         self._done[worker_id] = 1
+
+    def task_done(self, worker_id):
+        self._task_count_table[worker_id] += 1
 
     # called by worker processes
     def update(self, worker_id, progress, max_progress):
