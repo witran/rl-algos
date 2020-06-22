@@ -11,7 +11,7 @@ import dqn
 import constants
 import executor
 
-N_RUNS = 10
+N_RUNS = 5
 ENV_CODE = "CartPole-v0"
 # ENV_CODE = "LunarLander-v2"
 # ENV_CODE = "MountainCar-v0"
@@ -47,7 +47,7 @@ def generate_params():
 
         # main loop
         n_steps=500_000,
-        n_episodes=80,
+        n_episodes=20,
         target_update_interval=1,
         n_steps_to_start_training=1000,
 
@@ -91,11 +91,14 @@ def generate_params():
         "batch_size": [8, 16, 32],
         # "rmsprop_lr": [0.0001, 0.00025, 0.0005, 0.001]
         # "rmsprop_lr": [0.001, 0.0012, 0.0015]
-        "rmsprop_lr": [0.0015, 0.0012, 0.001]
+        "rmsprop_lr": [0.0015, 0.0012, 0.001],
+        "encode_time": [False, True],
+        "use_double_q": [False, True]
     }
 
     # names = ["n_batches", "batch_size", "rmsprop_lr"]
-    names = ["rmsprop_lr"]
+    # names = ["rmsprop_lr"]
+    names = ["use_double_q"]
     combinations = []
     current_combination = {}
     agents = []
@@ -133,17 +136,11 @@ def execute(agents):
             # launch n_runs times
             launch_args.append((task_id, env_code, agents[i]))
 
-    # print(launch_args)
-    # return
-
     result = executor.launch(
         run, launch_args, output_size=n_episodes, n_workers=8)
 
-    print('here')
-
     # average result to find mean, std
     result = result.reshape((n_agents, n_runs, n_episodes))
-    print(result)
     return result
 
 
